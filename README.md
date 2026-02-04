@@ -5,7 +5,7 @@ A mobile-friendly hide and seek game inspired by Jet Lag: The Game, adapted for 
 ## 🚀 Quick Start (GitHub Pages)
 
 ### Step 1: Upload to GitHub
-1. Go to your repository: https://github.com/thespacemachine/Hide-and-seek-game
+1. Go to your repository: https://thepeacemachine.github.io/Hide-and-seek-game/
 2. Click "Add file" → "Upload files"
 3. Drag and drop these files:
    - `index.html`
