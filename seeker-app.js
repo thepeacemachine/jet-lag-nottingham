@@ -99,9 +99,6 @@ function App() {
         thermometer: [],
         photo: []
     });
-    const [myLocation, setMyLocation] = useState(null);
-    const [gpsAccuracy, setGpsAccuracy] = useState(null);
-    
     const [showModal, setShowModal] = useState(false);
     const [modalContent, setModalContent] = useState(null);
     const [selectedMapPoint, setSelectedMapPoint] = useState(null);
@@ -171,33 +168,7 @@ function App() {
         }
     }, [activeQuestionType, selectedQuestionDetails, thermometerStartPoint]);
 
-    useEffect(() => {
-        if (gameStarted && 'geolocation' in navigator) {
-            watchIdRef.current = navigator.geolocation.watchPosition(
-                (position) => {
-                    const newLocation = {
-                        lat: position.coords.latitude,
-                        lng: position.coords.longitude
-                    };
-                    setMyLocation(newLocation);
-                    setGpsAccuracy(Math.round(position.coords.accuracy));
-                    updateMyMarker(newLocation);
-                },
-                (error) => console.error('GPS error:', error),
-                {
-                    enableHighAccuracy: true,
-                    maximumAge: 5000,
-                    timeout: 10000
-                }
-            );
-
-            return () => {
-                if (watchIdRef.current) {
-                    navigator.geolocation.clearWatch(watchIdRef.current);
-                }
-            };
-        }
-    }, [gameStarted]);
+    // GPS tracking removed - not needed for seeker app
 
     function updateMyMarker(location) {
         if (!mapInstanceRef.current) return;
@@ -218,35 +189,23 @@ function App() {
     function handleMapClick(latlng) {
         if (!activeQuestionType || !selectedQuestionDetails) return;
         
-        // For Radar: auto-calculate if within radius
+        // For Radar: Click to set YOUR location, then hider answers if they're within radius
         if (activeQuestionType === 'radar') {
-            if (!myLocation) {
-                alert('Waiting for GPS location...');
-                return;
-            }
-            
             const clickedPoint = { lat: latlng.lat, lng: latlng.lng };
-            const distance = distanceToMeters(selectedQuestionDetails);
-            const within = isWithinRadius(myLocation, clickedPoint, distance);
             
-            // Auto-submit the answer
+            // Just mark the question as asked and wait for hider's answer
             const question = {
                 type: 'radar',
                 details: selectedQuestionDetails,
                 location: clickedPoint,
                 timestamp: Date.now(),
                 timeUsed: new Date().toLocaleTimeString(),
-                answered: true,
-                answer: within ? 'Yes' : 'No'
+                answered: false // Will be answered manually
             };
             
-            setUsedQuestions(prev => ({
-                ...prev,
-                radar: [...prev.radar, question]
-            }));
-            
-            addQuestionMarker(question);
-            addShadedArea(question);
+            setPendingQuestion(question);
+            setShowModal(true);
+            setModalContent('answer');
             
             cancelSelection();
             return;
@@ -706,6 +665,24 @@ function App() {
         }
     }
 
+    function handleManualShade(location, radiusMiles) {
+        if (!mapInstanceRef.current) return;
+        
+        const radiusMeters = radiusMiles * 1609.34;
+        
+        const circle = L.circle([location.lat, location.lng], {
+            radius: radiusMeters,
+            color: '#95a5a6',
+            fillColor: '#95a5a6',
+            fillOpacity: 0.4,
+            weight: 2,
+            className: 'striped-area'
+        }).addTo(mapInstanceRef.current);
+        
+        shadedAreasRef.current.push(circle);
+        setShowModal(false);
+    }
+
     if (!gameStarted) {
         return (
             <div className="container">
@@ -749,13 +726,6 @@ function App() {
                 <div className="map-container">
                     <div id="map" ref={mapRef}></div>
                 </div>
-
-                {myLocation && (
-                    <div className="gps-status">
-                        <span>📍 GPS Active</span>
-                        <span className="gps-accuracy">±{gpsAccuracy}m</span>
-                    </div>
-                )}
 
                 <div style={{marginTop: '20px'}}>
                     {Object.entries(CARD_CONFIG).map(([type, config]) => (
@@ -803,20 +773,30 @@ function App() {
                     </div>
                 )}
 
-                <div style={{marginTop: '20px', display: 'flex', gap: '10px'}}>
+                <div style={{marginTop: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
                     <button 
-                        className="button button-secondary"
-                        onClick={clearShadedAreas}
-                        style={{flex: 1}}
+                        className="button button-primary"
+                        onClick={() => {
+                            setShowModal(true);
+                            setModalContent('manualShade');
+                        }}
                     >
-                        Clear Shading
+                        ✏️ Manual Shade
                     </button>
                     <button 
                         className="button button-secondary"
-                        onClick={resetGame}
-                        style={{flex: 1}}
+                        onClick={clearShadedAreas}
                     >
-                        🔄 Reset
+                        Clear Shading
+                    </button>
+                </div>
+                <div style={{marginTop: '10px'}}>
+                    <button 
+                        className="button button-secondary"
+                        onClick={resetGame}
+                        style={{width: '100%'}}
+                    >
+                        🔄 Reset Game
                     </button>
                 </div>
             </div>
@@ -842,6 +822,13 @@ function App() {
                         setShowModal(false);
                         setActiveQuestionType(null);
                     }}
+                />
+            )}
+
+            {showModal && modalContent === 'manualShade' && (
+                <ManualShadeModal
+                    onConfirm={handleManualShade}
+                    onClose={() => setShowModal(false)}
                 />
             )}
         </div>
@@ -1112,6 +1099,92 @@ function AnswerModal({ question, onSubmit, onCancel }) {
                     <button className="button button-secondary" onClick={onCancel} style={{flex: 1}}>Cancel</button>
                     <button className="button button-primary" onClick={() => answer && onSubmit(answer)} disabled={!answer} style={{flex: 1}}>
                         Submit
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ManualShadeModal({ onConfirm, onClose }) {
+    const [location, setLocation] = useState({ lat: 52.9548, lng: -1.1581 });
+    const [radius, setRadius] = useState(1);
+
+    return (
+        <div className="modal">
+            <div className="modal-content">
+                <div className="modal-title">✏️ Manual Shading</div>
+                
+                <p style={{marginBottom: '15px', fontSize: '14px', color: '#6b7280'}}>
+                    Click anywhere on the map or enter coordinates to shade an area.
+                </p>
+
+                <div style={{marginBottom: '15px'}}>
+                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
+                        Latitude
+                    </label>
+                    <input
+                        type="number"
+                        step="0.0001"
+                        value={location.lat}
+                        onChange={(e) => setLocation({...location, lat: parseFloat(e.target.value)})}
+                        className="text-input"
+                        style={{marginTop: 0}}
+                    />
+                </div>
+
+                <div style={{marginBottom: '15px'}}>
+                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
+                        Longitude
+                    </label>
+                    <input
+                        type="number"
+                        step="0.0001"
+                        value={location.lng}
+                        onChange={(e) => setLocation({...location, lng: parseFloat(e.target.value)})}
+                        className="text-input"
+                        style={{marginTop: 0}}
+                    />
+                </div>
+
+                <div style={{marginBottom: '15px'}}>
+                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
+                        Radius (miles)
+                    </label>
+                    <select
+                        value={radius}
+                        onChange={(e) => setRadius(parseFloat(e.target.value))}
+                        className="select-input"
+                        style={{marginTop: 0}}
+                    >
+                        <option value={0.25}>¼ mile</option>
+                        <option value={0.5}>½ mile</option>
+                        <option value={1}>1 mile</option>
+                        <option value={3}>3 miles</option>
+                        <option value={5}>5 miles</option>
+                    </select>
+                </div>
+
+                <div style={{background: '#f3f4f6', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px'}}>
+                    <div><strong>Preview:</strong></div>
+                    <div>Center: {location.lat.toFixed(4)}, {location.lng.toFixed(4)}</div>
+                    <div>Radius: {radius} mile{radius !== 1 ? 's' : ''}</div>
+                </div>
+
+                <div style={{display: 'flex', gap: '10px'}}>
+                    <button 
+                        className="button button-secondary" 
+                        onClick={onClose}
+                        style={{flex: 1}}
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        className="button button-primary" 
+                        onClick={() => onConfirm(location, radius)}
+                        style={{flex: 1}}
+                    >
+                        Add Shading
                     </button>
                 </div>
             </div>
