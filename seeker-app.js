@@ -205,7 +205,7 @@ function App() {
             
             setPendingQuestion(question);
             setShowModal(true);
-            setModalContent('answer');
+            setModalContent({ action: 'answer' });
             
             cancelSelection();
             return;
@@ -274,7 +274,7 @@ function App() {
         if (type === 'thermometer') {
             alert(`🌡️ Thermometer (${specificQuestion}):\n1. Click your STARTING point\n2. Click where you MOVED to\n3. Answer: Are you closer or farther?`);
         } else if (type === 'radar') {
-            alert(`🎯 Radar (${specificQuestion}):\nClick on the map.\nI'll auto-calculate if it's within range from your GPS location!`);
+            alert(`🎯 Radar (${specificQuestion}):\nClick on the map where YOU are.\nThen ask the hider if they're within range!`);
         } else {
             alert(`📍 Click on the map where you want to ask:\n"${specificQuestion}"`);
         }
@@ -313,12 +313,12 @@ function App() {
     }
 
     function submitAnswer(answer) {
-        if (!selectedMapPoint && activeQuestionType !== 'radar') {
-            alert('Error: No location selected');
-            return;
-        }
-        
-        const question = {
+        // For radar, use pendingQuestion; for others use the selected points
+        const question = pendingQuestion ? {
+            ...pendingQuestion,
+            answered: true,
+            answer: answer
+        } : {
             type: activeQuestionType,
             details: selectedQuestionDetails,
             location: selectedMapPoint,
@@ -329,15 +329,21 @@ function App() {
             answer: answer
         };
         
+        if (!question.location) {
+            alert('Error: No location selected');
+            return;
+        }
+        
         setUsedQuestions(prev => ({
             ...prev,
-            [activeQuestionType]: [...prev[activeQuestionType], question]
+            [question.type]: [...prev[question.type], question]
         }));
         
         addQuestionMarker(question);
         addShadedArea(question);
         
         setShowModal(false);
+        setPendingQuestion(null);
         cancelSelection();
     }
 
@@ -803,14 +809,17 @@ function App() {
 
             {showModal && modalContent?.action === 'answer' && (
                 <AnswerModal
-                    question={{
+                    question={pendingQuestion || {
                         type: activeQuestionType,
                         details: selectedQuestionDetails,
                         location: selectedMapPoint,
                         startLocation: thermometerStartPoint
                     }}
                     onSubmit={submitAnswer}
-                    onCancel={cancelSelection}
+                    onCancel={() => {
+                        setPendingQuestion(null);
+                        cancelSelection();
+                    }}
                 />
             )}
 
@@ -1018,6 +1027,25 @@ function AnswerModal({ question, onSubmit, onCancel }) {
                 </div>
 
                 <div style={{display: 'grid', gap: '10px'}}>
+                    {question.type === 'radar' && (
+                        <>
+                            <button onClick={() => setAnswer('Yes')} style={{
+                                padding: '15px', fontWeight: 'bold', fontSize: '16px', borderRadius: '8px',
+                                background: answer === 'Yes' ? '#10b981' : '#f3f4f6',
+                                color: answer === 'Yes' ? 'white' : '#374151',
+                                border: '3px solid ' + (answer === 'Yes' ? '#059669' : '#e5e7eb'),
+                                cursor: 'pointer'
+                            }}>✅ Yes (Within range)</button>
+                            <button onClick={() => setAnswer('No')} style={{
+                                padding: '15px', fontWeight: 'bold', fontSize: '16px', borderRadius: '8px',
+                                background: answer === 'No' ? '#ef4444' : '#f3f4f6',
+                                color: answer === 'No' ? 'white' : '#374151',
+                                border: '3px solid ' + (answer === 'No' ? '#dc2626' : '#e5e7eb'),
+                                cursor: 'pointer'
+                            }}>❌ No (Not in range)</button>
+                        </>
+                    )}
+
                     {question.type === 'thermometer' && (
                         <>
                             <button onClick={() => setAnswer('Closer')} style={{
