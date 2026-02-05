@@ -160,13 +160,19 @@ function App() {
         // Remove old click handler
         mapInstanceRef.current.off('click');
         
-        // Add new click handler if question type is active
-        if (activeQuestionType && selectedQuestionDetails) {
+        // Add click handler for drawing mode
+        if (isDrawing) {
+            mapInstanceRef.current.on('click', (e) => {
+                addDrawingPoint(e.latlng);
+            });
+        }
+        // Add click handler for question mode
+        else if (activeQuestionType && selectedQuestionDetails) {
             mapInstanceRef.current.on('click', (e) => {
                 handleMapClick(e.latlng);
             });
         }
-    }, [activeQuestionType, selectedQuestionDetails, thermometerStartPoint]);
+    }, [activeQuestionType, selectedQuestionDetails, thermometerStartPoint, isDrawing, drawingPoints]);
 
     // GPS tracking removed - not needed for seeker app
 
@@ -671,13 +677,63 @@ function App() {
         }
     }
 
-    function handleManualShade(location, radiusMiles) {
-        if (!mapInstanceRef.current) return;
+    // Manual drawing state
+    const [isDrawing, setIsDrawing] = useState(false);
+    const [drawingPoints, setDrawingPoints] = useState([]);
+    const drawingPolygonRef = useRef(null);
+
+    function startManualDrawing() {
+        setIsDrawing(true);
+        setDrawingPoints([]);
+        setShowModal(false);
+    }
+
+    function addDrawingPoint(latlng) {
+        if (!isDrawing) return;
         
-        const radiusMeters = radiusMiles * 1609.34;
+        const newPoints = [...drawingPoints, [latlng.lat, latlng.lng]];
+        setDrawingPoints(newPoints);
         
-        const circle = L.circle([location.lat, location.lng], {
-            radius: radiusMeters,
+        // Remove old preview polygon
+        if (drawingPolygonRef.current) {
+            drawingPolygonRef.current.remove();
+        }
+        
+        // Draw preview polygon if we have at least 2 points
+        if (newPoints.length >= 2) {
+            drawingPolygonRef.current = L.polygon(newPoints, {
+                color: '#f59e0b',
+                fillColor: '#95a5a6',
+                fillOpacity: 0.4,
+                weight: 3,
+                dashArray: '10, 10',
+                className: 'striped-area'
+            }).addTo(mapInstanceRef.current);
+        } else if (newPoints.length === 1) {
+            // Show a marker for the first point
+            drawingPolygonRef.current = L.circleMarker(newPoints[0], {
+                radius: 8,
+                color: '#f59e0b',
+                fillColor: '#f59e0b',
+                fillOpacity: 1,
+                weight: 3
+            }).addTo(mapInstanceRef.current);
+        }
+    }
+
+    function finishDrawing() {
+        if (drawingPoints.length < 3) {
+            alert('Draw at least 3 points to create a shaded area!');
+            return;
+        }
+        
+        // Remove preview
+        if (drawingPolygonRef.current) {
+            drawingPolygonRef.current.remove();
+        }
+        
+        // Add final shaded polygon
+        const polygon = L.polygon(drawingPoints, {
             color: '#95a5a6',
             fillColor: '#95a5a6',
             fillOpacity: 0.4,
@@ -685,8 +741,21 @@ function App() {
             className: 'striped-area'
         }).addTo(mapInstanceRef.current);
         
-        shadedAreasRef.current.push(circle);
-        setShowModal(false);
+        shadedAreasRef.current.push(polygon);
+        
+        // Reset
+        setIsDrawing(false);
+        setDrawingPoints([]);
+        drawingPolygonRef.current = null;
+    }
+
+    function cancelDrawing() {
+        if (drawingPolygonRef.current) {
+            drawingPolygonRef.current.remove();
+        }
+        setIsDrawing(false);
+        setDrawingPoints([]);
+        drawingPolygonRef.current = null;
     }
 
     if (!gameStarted) {
@@ -779,32 +848,60 @@ function App() {
                     </div>
                 )}
 
-                <div style={{marginTop: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
-                    <button 
-                        className="button button-primary"
-                        onClick={() => {
-                            setShowModal(true);
-                            setModalContent('manualShade');
-                        }}
-                    >
-                        ✏️ Manual Shade
-                    </button>
-                    <button 
-                        className="button button-secondary"
-                        onClick={clearShadedAreas}
-                    >
-                        Clear Shading
-                    </button>
-                </div>
-                <div style={{marginTop: '10px'}}>
-                    <button 
-                        className="button button-secondary"
-                        onClick={resetGame}
-                        style={{width: '100%'}}
-                    >
-                        🔄 Reset Game
-                    </button>
-                </div>
+                {!isDrawing ? (
+                    <>
+                        <div style={{marginTop: '20px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
+                            <button 
+                                className="button button-primary"
+                                onClick={startManualDrawing}
+                            >
+                                ✏️ Draw Shape
+                            </button>
+                            <button 
+                                className="button button-secondary"
+                                onClick={clearShadedAreas}
+                            >
+                                Clear Shading
+                            </button>
+                        </div>
+                        <div style={{marginTop: '10px'}}>
+                            <button 
+                                className="button button-secondary"
+                                onClick={resetGame}
+                                style={{width: '100%'}}
+                            >
+                                🔄 Reset Game
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <div style={{marginTop: '20px', background: '#fef3c7', padding: '15px', borderRadius: '10px', border: '2px solid #f59e0b'}}>
+                        <div style={{fontWeight: 'bold', marginBottom: '10px', color: '#92400e', fontSize: '16px'}}>
+                            ✏️ Drawing Mode Active
+                        </div>
+                        <div style={{color: '#92400e', fontSize: '14px', marginBottom: '15px'}}>
+                            Click on the map to add points to your shape. Need at least 3 points.
+                            <div style={{marginTop: '8px', fontWeight: 'bold'}}>
+                                Points: {drawingPoints.length}
+                            </div>
+                        </div>
+                        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
+                            <button 
+                                className="button button-primary"
+                                onClick={finishDrawing}
+                                disabled={drawingPoints.length < 3}
+                            >
+                                ✓ Finish Shape
+                            </button>
+                            <button 
+                                className="button button-secondary"
+                                onClick={cancelDrawing}
+                            >
+                                ✕ Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {showModal && modalContent?.action === 'answer' && (
@@ -834,12 +931,6 @@ function App() {
                 />
             )}
 
-            {showModal && modalContent === 'manualShade' && (
-                <ManualShadeModal
-                    onConfirm={handleManualShade}
-                    onClose={() => setShowModal(false)}
-                />
-            )}
         </div>
     );
 }
@@ -1127,92 +1218,6 @@ function AnswerModal({ question, onSubmit, onCancel }) {
                     <button className="button button-secondary" onClick={onCancel} style={{flex: 1}}>Cancel</button>
                     <button className="button button-primary" onClick={() => answer && onSubmit(answer)} disabled={!answer} style={{flex: 1}}>
                         Submit
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-function ManualShadeModal({ onConfirm, onClose }) {
-    const [location, setLocation] = useState({ lat: 52.9548, lng: -1.1581 });
-    const [radius, setRadius] = useState(1);
-
-    return (
-        <div className="modal">
-            <div className="modal-content">
-                <div className="modal-title">✏️ Manual Shading</div>
-                
-                <p style={{marginBottom: '15px', fontSize: '14px', color: '#6b7280'}}>
-                    Click anywhere on the map or enter coordinates to shade an area.
-                </p>
-
-                <div style={{marginBottom: '15px'}}>
-                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
-                        Latitude
-                    </label>
-                    <input
-                        type="number"
-                        step="0.0001"
-                        value={location.lat}
-                        onChange={(e) => setLocation({...location, lat: parseFloat(e.target.value)})}
-                        className="text-input"
-                        style={{marginTop: 0}}
-                    />
-                </div>
-
-                <div style={{marginBottom: '15px'}}>
-                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
-                        Longitude
-                    </label>
-                    <input
-                        type="number"
-                        step="0.0001"
-                        value={location.lng}
-                        onChange={(e) => setLocation({...location, lng: parseFloat(e.target.value)})}
-                        className="text-input"
-                        style={{marginTop: 0}}
-                    />
-                </div>
-
-                <div style={{marginBottom: '15px'}}>
-                    <label style={{display: 'block', fontWeight: 'bold', marginBottom: '5px', fontSize: '14px'}}>
-                        Radius (miles)
-                    </label>
-                    <select
-                        value={radius}
-                        onChange={(e) => setRadius(parseFloat(e.target.value))}
-                        className="select-input"
-                        style={{marginTop: 0}}
-                    >
-                        <option value={0.25}>¼ mile</option>
-                        <option value={0.5}>½ mile</option>
-                        <option value={1}>1 mile</option>
-                        <option value={3}>3 miles</option>
-                        <option value={5}>5 miles</option>
-                    </select>
-                </div>
-
-                <div style={{background: '#f3f4f6', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px'}}>
-                    <div><strong>Preview:</strong></div>
-                    <div>Center: {location.lat.toFixed(4)}, {location.lng.toFixed(4)}</div>
-                    <div>Radius: {radius} mile{radius !== 1 ? 's' : ''}</div>
-                </div>
-
-                <div style={{display: 'flex', gap: '10px'}}>
-                    <button 
-                        className="button button-secondary" 
-                        onClick={onClose}
-                        style={{flex: 1}}
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        className="button button-primary" 
-                        onClick={() => onConfirm(location, radius)}
-                        style={{flex: 1}}
-                    >
-                        Add Shading
                     </button>
                 </div>
             </div>
